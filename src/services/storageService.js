@@ -37,7 +37,7 @@ class CloudflareR2StorageService {
     try {
       // Sanitize email for use as folder name
       const sanitizedEmail = userEmail.replace(/[^a-zA-Z0-9@._-]/g, '_').toLowerCase();
-      const key = `client/${sanitizedEmail}/pdf_uploaded/${uuidv4()}.pdf`;
+      const key = `client/${sanitizedEmail}/${uuidv4()}.pdf`;
       console.log(`[CloudflareR2] 📤 Uploading original PDF: ${key} to bucket: ${this.bucket}`);
 
       const command = new PutObjectCommand({

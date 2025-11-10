@@ -18,7 +18,7 @@ const DocumentOriginal = sequelize.define('DocumentOriginal', {
   },
   filePath: {
     type: DataTypes.STRING(500),
-    allowNull: false,
+    allowNull: true, // Original file no longer saved to storage
     field: 'file_path'
   },
   originalFileName: {

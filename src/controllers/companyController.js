@@ -210,22 +210,24 @@ class CompanyController {
             email: company.email,
             passwordHash: company.passwordHash,
             role: User.ROLES.COMPANY,
+            rfc: company.rfc,  // ✅ Copy RFC from company to user
             isActive: true
           });
-          console.log(`[CompanyController] ✅ User created with ID: ${user.id}, Role: ${user.role}, Role Name: ${User.getRoleName(user.role)}`);
+          console.log(`[CompanyController] ✅ User created with ID: ${user.id}, Role: ${user.role}, Role Name: ${User.getRoleName(user.role)}, RFC: ${company.rfc}`);
         } else {
           // Generate temporary password
           const tempPassword = Math.random().toString(36).slice(-8);
           user = await authService.registerUser(
             company.email,
             tempPassword,
-            User.ROLES.COMPANY
+            User.ROLES.COMPANY,
+            company.rfc  // ✅ Pass RFC to authService
           );
-          console.log(`[CompanyController] ✅ User created via authService, ID: ${user.id}`);
+          console.log(`[CompanyController] ✅ User created via authService, ID: ${user.id}, RFC: ${company.rfc}`);
         }
         
         userId = user.id;
-        console.log(`[CompanyController] ✅ User account created for company: ${company.email}, userId: ${userId}`);
+        console.log(`[CompanyController] ✅ User account created for company: ${company.email}, userId: ${userId}, RFC: ${company.rfc}`);
       } else {
         console.log(`[CompanyController] ⚠️ Skipping user account creation (createUserAccount=false)`);
       }
@@ -314,31 +316,56 @@ class CompanyController {
       const userId = getCurrentUserId(req);
       const { companyId } = req.body;
 
-      console.log(`[AddCompanyToClient] userId: ${userId}, companyId: ${companyId}`);
+      console.log('========================================');
+      console.log('[AddCompanyToClient] 📥 Request received');
+      console.log(`[AddCompanyToClient] User ID: ${userId}`);
+      console.log(`[AddCompanyToClient] Company ID: ${companyId}`);
+      console.log(`[AddCompanyToClient] Request body:`, req.body);
+
+      // Validate companyId
+      if (!companyId) {
+        console.log('[AddCompanyToClient] ❌ No companyId provided in request body');
+        return res.status(400).json({ message: 'Company ID is required' });
+      }
 
       const company = await Company.findByPk(companyId);
 
       if (!company) {
-        console.log(`[AddCompanyToClient] ❌ Company ${companyId} not found`);
+        console.log(`[AddCompanyToClient] ❌ Company ${companyId} not found in database`);
         return res.status(404).json({ message: 'Company not found' });
       }
 
-      console.log(`[AddCompanyToClient] Company found: ${company.name}, status: ${company.status}`);
+      console.log(`[AddCompanyToClient] ✅ Company found: ${company.name}`);
+      console.log(`[AddCompanyToClient] Company status: ${company.status}`);
+      console.log(`[AddCompanyToClient] Required status: ${Company.STATUS.APPROVED}`);
 
       if (company.status !== Company.STATUS.APPROVED) {
-        console.log(`[AddCompanyToClient] ❌ Company ${companyId} not approved`);
-        return res.status(400).json({ message: 'Company is not approved' });
+        console.log(`[AddCompanyToClient] ❌ Company ${companyId} not approved (status: ${company.status})`);
+        return res.status(400).json({ 
+          message: 'Company is not approved',
+          companyStatus: company.status,
+          requiredStatus: Company.STATUS.APPROVED
+        });
       }
 
       // Check if already added
+      console.log(`[AddCompanyToClient] 🔍 Checking for existing association...`);
       const existing = await ClientCompany.findOne({
         where: { clientUserId: userId, companyId }
       });
 
       if (existing) {
         console.log(`[AddCompanyToClient] ⚠️ Company ${companyId} already associated with user ${userId}`);
-        return res.status(400).json({ message: 'Company already added' });
+        console.log(`[AddCompanyToClient] Existing record ID: ${existing.id}`);
+        return res.status(400).json({ 
+          message: 'Company already added',
+          existingId: existing.id
+        });
       }
+
+      console.log(`[AddCompanyToClient] ✅ No existing association found`);
+      console.log(`[AddCompanyToClient] 💾 Creating new client_companies record...`);
+      console.log(`[AddCompanyToClient] Data: { clientUserId: ${userId}, companyId: ${companyId} }`);
 
       const clientCompany = await ClientCompany.create({
         clientUserId: userId,
@@ -346,16 +373,45 @@ class CompanyController {
         createdAt: new Date()
       });
 
-      console.log(`[AddCompanyToClient] ✅ Company ${companyId} added to user ${userId}, record ID: ${clientCompany.id}`);
+      console.log(`[AddCompanyToClient] ✅ SUCCESS! Record created in client_companies table`);
+      console.log(`[AddCompanyToClient] Record ID: ${clientCompany.id}`);
+      console.log(`[AddCompanyToClient] Client User ID: ${clientCompany.clientUserId}`);
+      console.log(`[AddCompanyToClient] Company ID: ${clientCompany.companyId}`);
+      console.log(`[AddCompanyToClient] Created At: ${clientCompany.createdAt}`);
+      console.log('========================================');
 
       return res.status(200).json({ 
         message: 'Company added successfully',
-        clientCompanyId: clientCompany.id
+        clientCompanyId: clientCompany.id,
+        success: true
       });
     } catch (error) {
-      console.error('[AddCompanyToClient] ❌ Error:', error);
+      console.error('========================================');
+      console.error('[AddCompanyToClient] ❌ CRITICAL ERROR');
+      console.error('[AddCompanyToClient] Error name:', error.name);
+      console.error('[AddCompanyToClient] Error message:', error.message);
       console.error('[AddCompanyToClient] Error stack:', error.stack);
-      return res.status(500).json({ message: `An error occurred: ${error.message}` });
+      
+      if (error.name === 'SequelizeForeignKeyConstraintError') {
+        console.error('[AddCompanyToClient] ❌ Foreign key constraint error');
+        console.error('[AddCompanyToClient] This usually means:');
+        console.error('[AddCompanyToClient]   1. The user ID or company ID does not exist');
+        console.error('[AddCompanyToClient]   2. The foreign key constraints are not properly set up');
+      } else if (error.name === 'SequelizeUniqueConstraintError') {
+        console.error('[AddCompanyToClient] ❌ Unique constraint error');
+        console.error('[AddCompanyToClient] The association already exists (race condition?)');
+      } else if (error.name === 'SequelizeDatabaseError') {
+        console.error('[AddCompanyToClient] ❌ Database error');
+        console.error('[AddCompanyToClient] Check if client_companies table exists and has correct schema');
+      }
+      
+      console.error('========================================');
+      
+      return res.status(500).json({ 
+        message: `An error occurred: ${error.message}`,
+        errorType: error.name,
+        success: false
+      });
     }
   }
 

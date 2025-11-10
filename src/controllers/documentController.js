@@ -11,20 +11,25 @@ class DocumentController {
     const startTime = Date.now(); // Track processing time
     
     try {
-      console.log('Upload request received');
-      
+      console.log('[DocumentController] 📥 Upload request received');
+
       if (!req.file) {
+        console.log('[DocumentController] ❌ No file in request');
         return res.status(400).json({ message: 'No file uploaded' });
       }
 
+      console.log(`[DocumentController] ℹ File received: ${req.file.originalname}, MIME: ${req.file.mimetype}, Size: ${req.file.size} bytes`);
+
       if (req.file.mimetype !== 'application/pdf') {
+        console.log(`[DocumentController] ❌ Invalid file type: ${req.file.mimetype}`);
         return res.status(400).json({ message: 'Only PDF files are allowed' });
       }
 
-      // Validate file size (max 3MB)
-      const maxSizeBytes = 3 * 1024 * 1024; // 3MB
+      // Validate file size (max 5MB)
+      const maxSizeBytes = 5 * 1024 * 1024; // 5MB
       if (req.file.size > maxSizeBytes) {
         const sizeInMB = (req.file.size / (1024 * 1024)).toFixed(2);
+        console.log(`[DocumentController] ❌ File too large: ${sizeInMB}MB (max: 5MB)`);
 
         // Log failed upload to history
         const userId = getCurrentUserId(req);
@@ -34,12 +39,12 @@ class DocumentController {
           userRole: 'Client',
           fileName: req.file.originalname,
           fileSizeBytes: req.file.size,
-          errorMessage: `File size exceeds maximum limit of 3MB (${sizeInMB}MB)`
+          errorMessage: `File size exceeds maximum limit of 5MB (${sizeInMB}MB)`
         });
 
         return res.status(400).json({
-          message: `File size exceeds the maximum limit of 3MB. Your file is ${sizeInMB}MB.`,
-          maxSize: '3MB',
+          message: `File size exceeds the maximum limit of 5MB. Your file is ${sizeInMB}MB.`,
+          maxSize: '5MB',
           fileSize: `${sizeInMB}MB`
         });
       }
@@ -48,46 +53,42 @@ class DocumentController {
       const userEmail = getCurrentUserEmail(req);
       const batchId = req.body.batchId || null;
 
-      console.log(`File: ${req.file.originalname}, Size: ${req.file.size}`);
+      console.log(`[DocumentController] ✅ File validation passed: ${req.file.originalname}, Size: ${req.file.size} bytes`);
 
       const pdfBuffer = req.file.buffer;
 
-      // Store original PDF in Cloudflare R2
-      const originalPdfPath = await storageService.saveOriginalPdf(pdfBuffer, req.file.originalname, userEmail);
-
-      // Create document record
+      // Create minimal document record (no original file saved to Cloudflare)
       document = await DocumentOriginal.create({
         uploaderUserId: userId,
         originalFileName: req.file.originalname,
-        filePath: originalPdfPath,
+        filePath: null, // Original file not saved
         fileSizeBytes: req.file.size,
         status: DocumentOriginal.STATUS.UPLOADED,
         uploadedAt: new Date(),
         uploadBatchId: batchId
       });
 
-      // Log UPLOADED action to history
-      await DocumentHistory.logAction({
-        actionType: DocumentHistory.ACTION_TYPES.UPLOADED,
-        documentId: document.id,
-        userId: userId,
-        userRole: 'Client',
-        fileName: req.file.originalname,
-        fileSizeBytes: req.file.size,
-        batchId: batchId,
-        metadata: { originalPath: originalPdfPath }
-      });
-
-      console.log('[DocumentController] ✅ STEP 1: Document record created in database (ID:', document.id, ')');
+      console.log('[DocumentController] ✅ STEP 1: Document record created in database (ID:', document.id, ') - Original PDF kept in memory only');
 
       // Process PDF (extract all text and create blank PDF)
-      console.log('[DocumentController] 🔄 STEP 2: Processing PDF (extracting text and creating blank PDF)...');
-      const processingResult = await pdfProcessingService.processPdf(
-        pdfBuffer,
-        { email: userEmail, userId: userId.toString() },
-        document.originalFileName
-      );
-      console.log('[DocumentController] ✅ STEP 2: PDF processing completed. Output size:', processingResult.finalPdfBytes.length, 'bytes');
+      console.log('[DocumentController] 🔄 STEP 2: Processing PDF (extracting text and creating branded PDF)...');
+      console.log(`[DocumentController] ℹ PDF buffer size: ${pdfBuffer.length} bytes`);
+      console.log(`[DocumentController] ℹ User context: email=${userEmail}, userId=${userId}`);
+
+      let processingResult;
+      try {
+        processingResult = await pdfProcessingService.processPdf(
+          pdfBuffer,
+          { email: userEmail, userId: userId.toString() },
+          document.originalFileName
+        );
+        console.log('[DocumentController] ✅ STEP 2: PDF processing completed successfully');
+        console.log(`[DocumentController] ✅ Output size: ${processingResult.finalPdfBytes.length} bytes`);
+      } catch (processingError) {
+        console.error('[DocumentController] ❌ CRITICAL: PDF processing failed:', processingError.message);
+        console.error('[DocumentController] ❌ Processing error stack:', processingError.stack);
+        throw processingError; // Re-throw to be caught by outer catch
+      }
 
       // Generate RFC-based filename
       const currentUser = await User.findByPk(userId);
@@ -119,17 +120,22 @@ class DocumentController {
 
       console.log('[DocumentController] 💾 STEP 5: Creating processed document record in database...');
 
+      // Prepare extracted data as JSON
+      const extractedJsonData = JSON.stringify(processingResult.extractedData || {});
+      console.log(`[DocumentController] 📊 Extracted data to save:`, processingResult.extractedData);
+
       // Create processed document record
       const processedDocument = await DocumentProcessed.create({
         sourceDocumentId: document.id,
         templateRuleSetId: null,
         filePathFinalPdf: processedPdfPath,
-        extractedJsonData: '{}',
+        extractedJsonData: extractedJsonData,
         status: DocumentProcessed.STATUS.APPROVED,
         createdAt: new Date()
       });
 
       console.log('[DocumentController] ✅ STEP 5: Processed document saved to database (ID:', processedDocument.id, ')');
+      console.log('[DocumentController] ✅ Extracted data saved:', extractedJsonData.substring(0, 200) + '...');
       console.log('[DocumentController] 🎉 ALL STEPS COMPLETED SUCCESSFULLY!');
 
       // Calculate processing time
@@ -146,7 +152,9 @@ class DocumentController {
         batchId: batchId,
         processingTimeMs: processingTimeMs,
         metadata: {
-          processedPath: processedPdfPath
+          processedPath: processedPdfPath,
+          originalSaved: false, // Original not saved to Cloudflare
+          note: 'Only processed PDF saved to storage'
         }
       });
 
@@ -164,9 +172,24 @@ class DocumentController {
       console.error('Error Stack:', error.stack);
       console.error('Error Name:', error.name);
       console.error('========================================');
-      
+
       const processingTimeMs = Date.now() - startTime;
-      
+
+      // Determine user-friendly error message
+      let userMessage = error.message;
+
+      if (error.message.includes('GPT') || error.message.includes('OpenAI')) {
+        userMessage = 'Image processing encountered an issue, but your document was still processed using standard text extraction.';
+      } else if (error.message.includes('PDF está protegido con contraseña')) {
+        userMessage = 'The PDF is password-protected. Please upload a PDF without password protection.';
+      } else if (error.message.includes('formularios')) {
+        userMessage = 'The PDF contains interactive forms, which are not allowed.';
+      } else if (error.message.includes('JavaScript')) {
+        userMessage = 'The PDF contains JavaScript code, which is not allowed for security reasons.';
+      } else if (error.message.includes('timeout')) {
+        userMessage = 'Document processing took too long. Please try uploading a smaller or simpler PDF.';
+      }
+
       // Log failure to history
       try {
         const userId = getCurrentUserId(req);
@@ -180,16 +203,17 @@ class DocumentController {
           batchId: req.body?.batchId || null,
           processingTimeMs: processingTimeMs,
           errorMessage: error.message,
-          metadata: { 
+          metadata: {
             errorStack: error.stack,
             errorName: error.name,
-            errorCode: error.code
+            errorCode: error.code,
+            userMessage: userMessage
           }
         });
       } catch (historyError) {
         console.error('Failed to log error to history:', historyError.message);
       }
-      
+
       // If document was created, mark it as REJECTED (Not fulfilled)
       if (document && document.id) {
         try {
@@ -199,10 +223,11 @@ class DocumentController {
           console.error('Error updating document status:', updateError);
         }
       }
-      
-      return res.status(500).json({ 
-        message: `Error uploading document: ${error.message}`,
+
+      return res.status(500).json({
+        message: userMessage,
         status: 'Failed',
+        technicalDetails: process.env.NODE_ENV === 'development' ? error.message : undefined,
         errorDetails: process.env.NODE_ENV === 'development' ? error.stack : undefined
       });
     }
@@ -509,7 +534,7 @@ class DocumentController {
           isPdf: true,
           grayscale8bit: true,
           dpi300: true,
-          sizeUnder3MB: processedDocument.sourceDocument?.fileSizeBytes <= (3 * 1024 * 1024),
+          sizeUnder5MB: processedDocument.sourceDocument?.fileSizeBytes <= (5 * 1024 * 1024),
           noInteractiveStuff: true,
           hasRequiredMetadata: true
         },
@@ -950,30 +975,38 @@ class DocumentController {
         if (isAdmin) {
           // Admin: Hard delete
           await storageService.deleteFile(processed.filePathFinalPdf);
-          
+
           if (processed.sourceDocument) {
-            await storageService.deleteFile(processed.sourceDocument.filePath);
+            // Only try to delete if filePath is set (original was saved)
+            if (processed.sourceDocument.filePath) {
+              await storageService.deleteFile(processed.sourceDocument.filePath);
+            }
             await processed.sourceDocument.destroy();
           }
-          
+
           await processed.destroy();
         } else {
           // Client: Hard delete (no history logging for client deletions)
           console.log(`[DocumentController] 🗑️ Client deleting document ${id}, cleaning up files...`);
-          
+
           // Delete processed PDF from Cloudflare
           const deletedProcessed = await storageService.deleteFile(processed.filePathFinalPdf);
           console.log(`[DocumentController] ${deletedProcessed ? '✅' : '⚠️'} Processed PDF deleted: ${processed.filePathFinalPdf}`);
-          
-          // Delete original PDF from Cloudflare
+
+          // Delete original PDF from Cloudflare (if it exists)
           if (processed.sourceDocument) {
-            const deletedOriginal = await storageService.deleteFile(processed.sourceDocument.filePath);
-            console.log(`[DocumentController] ${deletedOriginal ? '✅' : '⚠️'} Original PDF deleted: ${processed.sourceDocument.filePath}`);
-            
+            // Only try to delete if filePath is set (original was saved)
+            if (processed.sourceDocument.filePath) {
+              const deletedOriginal = await storageService.deleteFile(processed.sourceDocument.filePath);
+              console.log(`[DocumentController] ${deletedOriginal ? '✅' : '⚠️'} Original PDF deleted: ${processed.sourceDocument.filePath}`);
+            } else {
+              console.log(`[DocumentController] ℹ️ Original PDF was not saved to storage, skipping deletion`);
+            }
+
             // Hard delete source document from DB
             await processed.sourceDocument.destroy();
           }
-          
+
           // Hard delete processed document from DB
           await processed.destroy();
         }
