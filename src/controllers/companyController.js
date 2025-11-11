@@ -84,7 +84,7 @@ class CompanyController {
         name,
         rfc,
         email,
-        whatsapp: whatsapp || null,
+        // whatsapp: whatsapp || null,
         passwordHash,
         status: Company.STATUS.PENDING,
         createdAt: new Date()
@@ -145,7 +145,7 @@ class CompanyController {
         name: company.name,
         rfc: company.rfc,
         email: company.email,
-        whatsapp: company.whatsapp,
+        // whatsapp: company.whatsapp,
         status: company.status,
         hasUserAccount: !!company.userId,
         userEmail: company.user?.email || null,

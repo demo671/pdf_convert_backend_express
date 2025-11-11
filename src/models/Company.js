@@ -24,10 +24,10 @@ const Company = sequelize.define('Company', {
       isEmail: true
     }
   },
-  whatsapp: {
-    type: DataTypes.STRING(20),
-    allowNull: true
-  },
+  // whatsapp: {
+  //   type: DataTypes.STRING(20),
+  //   allowNull: true
+  // },
   passwordHash: {
     type: DataTypes.STRING(255),
     allowNull: true,
