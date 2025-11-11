@@ -24,7 +24,7 @@ const Company = sequelize.define('Company', {
       isEmail: true
     }
   },
-  phone: {
+  whatsapp: {
     type: DataTypes.STRING(20),
     allowNull: true
   },

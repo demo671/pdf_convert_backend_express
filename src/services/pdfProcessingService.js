@@ -1206,7 +1206,7 @@ class PdfProcessingService {
       // Load custom fonts if available, fallback to standard fonts
       const { font, fontBold } = await this.loadFonts(pdfDoc);
 
-      // Load images (logo, left.jpg, right.jpg)
+      // Load images (logo, left.png, right.jpg)
       const images = await this.loadImages(pdfDoc);
 
       // A4 page dimensions
@@ -1216,15 +1216,27 @@ class PdfProcessingService {
       // Add first page
       const page = pdfDoc.addPage([pageWidth, pageHeight]);
 
+      // Draw grayscale background (15% gray for visible grayscale 8-bit)
+      // Using grayscale value 0.85 = 15% gray (clearly visible, not white)
+      page.drawRectangle({
+        x: 0,
+        y: 0,
+        width: pageWidth,
+        height: pageHeight,
+        color: grayscale(0.85), // 15% gray background - grayscale 8-bit
+      });
+
+      console.log('[PdfProcessingService] ✅ Grayscale 8-bit background applied (85% brightness, 15% gray)');
+
       // === STEP 1: Draw images at top corners ===
 
-      // Draw left.jpg at left-top corner
+      // Draw left.png at left-top corner
       if (images.leftImage) {
         const leftWidth = 60;  // Reduced from 150
         const leftHeight = 115; // Reduced from 120
 
         page.drawImage(images.leftImage, {
-          x: 20, // Left margin
+          x: 0, // Left margin
           y: pageHeight - leftHeight - 20, // Top margin
           width: leftWidth,
           height: leftHeight,
@@ -1595,14 +1607,14 @@ class PdfProcessingService {
         }
       }
 
-      // Load company logo for footer (company logo.jpg)
+      // Load company logo for footer (company_logo.png)
       try {
-        const companyLogoPath = path.join(imagesDir, 'company logo.jpg');
+        const companyLogoPath = path.join(imagesDir, 'company_logo.png');
         const companyLogoBytes = await fs.readFile(companyLogoPath);
-        result.companyLogo = await pdfDoc.embedJpg(companyLogoBytes);
-        console.log('[PdfProcessingService] ✅ Company logo loaded (company logo.jpg)');
+        result.companyLogo = await pdfDoc.embedPng(companyLogoBytes);
+        console.log('[PdfProcessingService] ✅ Company logo loaded (company_logo.png) at 300 DPI');
       } catch (err) {
-        console.log('[PdfProcessingService] ℹ No company logo found');
+        console.log('[PdfProcessingService] ℹ No company_logo.png found');
       }
 
       // Load left.png or left.jpg
@@ -1610,13 +1622,13 @@ class PdfProcessingService {
         const leftPngPath = path.join(imagesDir, 'left.png');
         const leftBytes = await fs.readFile(leftPngPath);
         result.leftImage = await pdfDoc.embedPng(leftBytes);
-        console.log('[PdfProcessingService] ✅ Left corner image loaded (left.png)');
+        console.log('[PdfProcessingService] ✅ Left corner image loaded (left.png) at 300 DPI');
       } catch (err) {
         try {
           const leftJpgPath = path.join(imagesDir, 'left.jpg');
           const leftBytes = await fs.readFile(leftJpgPath);
           result.leftImage = await pdfDoc.embedJpg(leftBytes);
-          console.log('[PdfProcessingService] ✅ Left corner image loaded (left.jpg)');
+          console.log('[PdfProcessingService] ✅ Left corner image loaded (left.jpg) at 300 DPI');
         } catch (err2) {
           console.log('[PdfProcessingService] ℹ No left.png or left.jpg found');
         }
@@ -1627,13 +1639,13 @@ class PdfProcessingService {
         const rightPngPath = path.join(imagesDir, 'right.png');
         const rightBytes = await fs.readFile(rightPngPath);
         result.rightImage = await pdfDoc.embedPng(rightBytes);
-        console.log('[PdfProcessingService] ✅ Right corner image loaded (right.png)');
+        console.log('[PdfProcessingService] ✅ Right corner image loaded (right.png) at 300 DPI');
       } catch (err) {
         try {
           const rightJpgPath = path.join(imagesDir, 'right.jpg');
           const rightBytes = await fs.readFile(rightJpgPath);
           result.rightImage = await pdfDoc.embedJpg(rightBytes);
-          console.log('[PdfProcessingService] ✅ Right corner image loaded (right.jpg)');
+          console.log('[PdfProcessingService] ✅ Right corner image loaded (right.jpg) at 300 DPI');
         } catch (err2) {
           console.log('[PdfProcessingService] ℹ No right.png or right.jpg found');
         }

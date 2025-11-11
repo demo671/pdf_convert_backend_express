@@ -51,7 +51,7 @@ class CompanyController {
   // Register new company
   async registerCompany(req, res) {
     try {
-      const { name, rfc, email, phone, password } = req.body;
+      const { name, rfc, email, whatsapp, password } = req.body;
 
       // Validate required fields
       if (!name || !rfc || !email || !password) {
@@ -84,7 +84,7 @@ class CompanyController {
         name,
         rfc,
         email,
-        phone: phone || null,
+        whatsapp: whatsapp || null,
         passwordHash,
         status: Company.STATUS.PENDING,
         createdAt: new Date()
@@ -145,7 +145,7 @@ class CompanyController {
         name: company.name,
         rfc: company.rfc,
         email: company.email,
-        phone: company.phone,
+        whatsapp: company.whatsapp,
         status: company.status,
         hasUserAccount: !!company.userId,
         userEmail: company.user?.email || null,
