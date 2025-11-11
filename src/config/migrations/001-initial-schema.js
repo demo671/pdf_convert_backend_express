@@ -51,7 +51,6 @@ async function runMigration() {
         name VARCHAR(255) NOT NULL,
         rfc VARCHAR(13) NOT NULL UNIQUE,
         email VARCHAR(255) NOT NULL UNIQUE,
-        whatsapp VARCHAR(20),
         password_hash VARCHAR(255),
         user_id INTEGER,
         status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
