@@ -1,6 +1,7 @@
 const { DocumentOriginal, DocumentProcessed, User, Notification, DocumentHistory, Company, ClientCompany, CompanyNotification } = require('../models');
 const storageService = require('../services/storageService');
 const pdfProcessingService = require('../services/pdfProcessingService');
+const emailService = require('../services/emailService');
 const { getCurrentUserId, getCurrentUserEmail, getCurrentUserRole } = require('../utils/helpers');
 const { Op } = require('sequelize');
 const archiver = require('archiver');
@@ -900,6 +901,31 @@ class DocumentController {
         });
 
         console.log(`[DocumentController] ✅ Documents sent to company ${selectedCompanyId} and notification created (ID: ${notification.id})`);
+
+        // Send email to company with PDF attachments
+        try {
+          const company = await Company.findByPk(selectedCompanyId);
+          if (company && company.email) {
+            console.log(`[DocumentController] 📧 Sending email to company: ${company.email}...`);
+
+            const emailResult = await emailService.sendDocumentsToCompany({
+              toEmail: company.email,
+              toName: company.name,
+              fromName: currentUser.email,
+              documents: documents,
+              documentCount: documentIds.length
+            });
+
+            if (emailResult.success) {
+              console.log(`[DocumentController] ✅ Email sent successfully to ${company.email} with ${emailResult.attachmentCount} attachments`);
+            } else {
+              console.warn(`[DocumentController] ⚠️ Email sending failed: ${emailResult.message || emailResult.error}`);
+            }
+          }
+        } catch (emailError) {
+          console.error(`[DocumentController] ❌ Error sending email to company:`, emailError.message);
+          // Don't fail the whole operation if email fails
+        }
       } else {
         await DocumentProcessed.update(
           { 
