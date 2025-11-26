@@ -9,6 +9,8 @@ const Company = require('./Company');
 const ClientCompany = require('./ClientCompany');
 const CompanyNotification = require('./CompanyNotification');
 const AdminNotification = require('./AdminNotification');
+const CompanyReceivedDocument = require('./CompanyReceivedDocument');
+const WhatsAppConversation = require('./WhatsAppConversation');
 
 // Define associations
 User.hasMany(DocumentOriginal, { foreignKey: 'uploaderUserId', as: 'uploadedDocuments' });
@@ -39,6 +41,10 @@ Company.belongsTo(User, { foreignKey: 'approvedByAdminId', as: 'approvedByAdmin'
 User.belongsToMany(Company, { through: ClientCompany, foreignKey: 'clientUserId', as: 'companies' });
 Company.belongsToMany(User, { through: ClientCompany, foreignKey: 'companyId', as: 'clients' });
 
+// ClientCompany direct associations (needed for include queries)
+ClientCompany.belongsTo(User, { foreignKey: 'clientUserId', as: 'client' });
+ClientCompany.belongsTo(Company, { foreignKey: 'companyId', as: 'company' });
+
 // Document-Company associations
 DocumentProcessed.belongsTo(Company, { foreignKey: 'sentToCompanyId', as: 'sentToCompany' });
 Company.hasMany(DocumentProcessed, { foreignKey: 'sentToCompanyId', as: 'receivedDocuments' });
@@ -53,6 +59,13 @@ User.hasMany(CompanyNotification, { foreignKey: 'clientUserId', as: 'companyNoti
 // Admin notification associations
 AdminNotification.belongsTo(User, { foreignKey: 'relatedUserId', as: 'relatedUser' });
 AdminNotification.belongsTo(Company, { foreignKey: 'relatedCompanyId', as: 'relatedCompany' });
+
+// Company received documents associations (junction table)
+CompanyReceivedDocument.belongsTo(Company, { foreignKey: 'companyId', as: 'company' });
+Company.hasMany(CompanyReceivedDocument, { foreignKey: 'companyId', as: 'receivedDocumentRecords' });
+
+CompanyReceivedDocument.belongsTo(DocumentProcessed, { foreignKey: 'documentProcessedId', as: 'documentProcessed' });
+DocumentProcessed.hasMany(CompanyReceivedDocument, { foreignKey: 'documentProcessedId', as: 'companyReceipts' });
 
 // Sync database (create tables if they don't exist)
 const syncDatabase = async () => {
@@ -77,6 +90,8 @@ module.exports = {
   Company,
   ClientCompany,
   CompanyNotification,
-  AdminNotification
+  AdminNotification,
+  CompanyReceivedDocument,
+  WhatsAppConversation
 };
 

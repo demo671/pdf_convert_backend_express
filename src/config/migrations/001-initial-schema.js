@@ -34,6 +34,10 @@ async function runMigration() {
         password_hash VARCHAR(255) NOT NULL,
         role INTEGER NOT NULL DEFAULT 2 CHECK (role IN (1, 2, 3)),
         is_active BOOLEAN NOT NULL DEFAULT true,
+        is_email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+        otp_code VARCHAR(6),
+        otp_expiry TIMESTAMP,
+        otp_attempts INTEGER NOT NULL DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
@@ -49,13 +53,50 @@ async function runMigration() {
           ALTER TABLE users ADD COLUMN whatsapp_number VARCHAR(20);
           RAISE NOTICE 'Added whatsapp_number column to users';
         END IF;
+
+        -- 2FA Email OTP fields
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='users' AND column_name='is_email_verified') THEN
+          ALTER TABLE users ADD COLUMN is_email_verified BOOLEAN NOT NULL DEFAULT FALSE;
+          RAISE NOTICE 'Added is_email_verified column to users';
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='users' AND column_name='otp_code') THEN
+          ALTER TABLE users ADD COLUMN otp_code VARCHAR(6);
+          RAISE NOTICE 'Added otp_code column to users';
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='users' AND column_name='otp_expiry') THEN
+          ALTER TABLE users ADD COLUMN otp_expiry TIMESTAMP;
+          RAISE NOTICE 'Added otp_expiry column to users';
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='users' AND column_name='otp_attempts') THEN
+          ALTER TABLE users ADD COLUMN otp_attempts INTEGER NOT NULL DEFAULT 0;
+          RAISE NOTICE 'Added otp_attempts column to users';
+        END IF;
       END $$;
+    `);
+
+    // Mark existing users as email verified (backward compatibility only)
+    // New users will require email verification via OTP
+    await sequelize.query(`
+      UPDATE users
+      SET is_email_verified = TRUE
+      WHERE is_email_verified = FALSE;
     `);
 
     // Add comments
     await sequelize.query(`
       COMMENT ON COLUMN users.role IS '1=Admin, 2=Client, 3=Company';
       COMMENT ON COLUMN users.whatsapp_number IS 'WhatsApp contact number for clients (optional)';
+      COMMENT ON COLUMN users.is_email_verified IS '2FA: Whether the user has verified their email with OTP (Required for ALL users: Admin, Client, Company)';
+      COMMENT ON COLUMN users.otp_code IS '2FA: 6-digit OTP code for email verification (Required for ALL users)';
+      COMMENT ON COLUMN users.otp_expiry IS '2FA: Expiry time for the OTP code (Required for ALL users)';
+      COMMENT ON COLUMN users.otp_attempts IS '2FA: Number of failed OTP verification attempts (Required for ALL users)';
     `);
 
     console.log('✅ users table created/verified');
@@ -79,6 +120,10 @@ async function runMigration() {
         approved_at TIMESTAMP,
         approved_by_admin_id INTEGER,
         rejection_reason TEXT,
+        is_email_verified BOOLEAN NOT NULL DEFAULT FALSE,
+        otp_code VARCHAR(6),
+        otp_expiry TIMESTAMP,
+        otp_attempts INTEGER NOT NULL DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
@@ -96,7 +141,39 @@ async function runMigration() {
           ALTER TABLE companies ADD COLUMN whatsapp_number VARCHAR(20) NOT NULL DEFAULT '';
           RAISE NOTICE 'Added whatsapp_number column to companies';
         END IF;
+
+        -- 2FA Email OTP fields
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='companies' AND column_name='is_email_verified') THEN
+          ALTER TABLE companies ADD COLUMN is_email_verified BOOLEAN NOT NULL DEFAULT FALSE;
+          RAISE NOTICE 'Added is_email_verified column to companies';
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='companies' AND column_name='otp_code') THEN
+          ALTER TABLE companies ADD COLUMN otp_code VARCHAR(6);
+          RAISE NOTICE 'Added otp_code column to companies';
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='companies' AND column_name='otp_expiry') THEN
+          ALTER TABLE companies ADD COLUMN otp_expiry TIMESTAMP;
+          RAISE NOTICE 'Added otp_expiry column to companies';
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='companies' AND column_name='otp_attempts') THEN
+          ALTER TABLE companies ADD COLUMN otp_attempts INTEGER NOT NULL DEFAULT 0;
+          RAISE NOTICE 'Added otp_attempts column to companies';
+        END IF;
       END $$;
+    `);
+
+    // Mark existing approved companies as email verified (backward compatibility)
+    await sequelize.query(`
+      UPDATE companies
+      SET is_email_verified = TRUE
+      WHERE is_email_verified = FALSE AND status = 'approved';
     `);
 
     // Add comments
@@ -105,6 +182,10 @@ async function runMigration() {
       COMMENT ON COLUMN companies.password_hash IS 'Temporary password hash until company is approved';
       COMMENT ON COLUMN companies.user_id IS 'User account for company login (created when approved)';
       COMMENT ON COLUMN companies.status IS 'pending, approved, rejected';
+      COMMENT ON COLUMN companies.is_email_verified IS '2FA: Whether the company has verified their email with OTP during registration';
+      COMMENT ON COLUMN companies.otp_code IS '2FA: 6-digit OTP code for email verification during registration';
+      COMMENT ON COLUMN companies.otp_expiry IS '2FA: Expiry time for the OTP code';
+      COMMENT ON COLUMN companies.otp_attempts IS '2FA: Number of failed OTP verification attempts during registration';
     `);
 
     console.log('✅ companies table created/verified');
@@ -210,6 +291,7 @@ async function runMigration() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         status INTEGER NOT NULL DEFAULT 1 CHECK (status IN (1, 2, 3)),
         is_deleted_by_client BOOLEAN NOT NULL DEFAULT false,
+        is_deleted_by_company BOOLEAN NOT NULL DEFAULT false,
         is_sent_to_admin BOOLEAN NOT NULL DEFAULT false,
         sent_to_admin_at TIMESTAMP,
         is_sent_to_company BOOLEAN NOT NULL DEFAULT false,
@@ -219,46 +301,52 @@ async function runMigration() {
         FOREIGN KEY (template_rule_set_id) REFERENCES template_rule_sets(id) ON DELETE SET NULL,
         FOREIGN KEY (sent_to_company_id) REFERENCES companies(id) ON DELETE SET NULL
       );
-      
+
       COMMENT ON COLUMN document_processeds.status IS '1=Pending, 2=Approved, 3=Rejected';
     `);
     
     // Add missing columns if table already exists (for existing deployments)
     console.log('🔧 Checking for missing columns in document_processeds...');
     await sequelize.query(`
-      DO $$ 
+      DO $$
       BEGIN
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                        WHERE table_name='document_processeds' AND column_name='is_deleted_by_client') THEN
           ALTER TABLE document_processeds ADD COLUMN is_deleted_by_client BOOLEAN NOT NULL DEFAULT false;
           RAISE NOTICE 'Added is_deleted_by_client column';
         END IF;
-        
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_name='document_processeds' AND column_name='is_deleted_by_company') THEN
+          ALTER TABLE document_processeds ADD COLUMN is_deleted_by_company BOOLEAN NOT NULL DEFAULT false;
+          RAISE NOTICE 'Added is_deleted_by_company column';
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                        WHERE table_name='document_processeds' AND column_name='is_sent_to_admin') THEN
           ALTER TABLE document_processeds ADD COLUMN is_sent_to_admin BOOLEAN NOT NULL DEFAULT false;
           RAISE NOTICE 'Added is_sent_to_admin column';
         END IF;
-        
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                        WHERE table_name='document_processeds' AND column_name='sent_to_admin_at') THEN
           ALTER TABLE document_processeds ADD COLUMN sent_to_admin_at TIMESTAMP;
           RAISE NOTICE 'Added sent_to_admin_at column';
         END IF;
-        
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                        WHERE table_name='document_processeds' AND column_name='is_sent_to_company') THEN
           ALTER TABLE document_processeds ADD COLUMN is_sent_to_company BOOLEAN NOT NULL DEFAULT false;
           RAISE NOTICE 'Added is_sent_to_company column';
         END IF;
-        
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                        WHERE table_name='document_processeds' AND column_name='sent_to_company_id') THEN
           ALTER TABLE document_processeds ADD COLUMN sent_to_company_id INTEGER REFERENCES companies(id) ON DELETE SET NULL;
           RAISE NOTICE 'Added sent_to_company_id column';
         END IF;
-        
-        IF NOT EXISTS (SELECT 1 FROM information_schema.columns 
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                        WHERE table_name='document_processeds' AND column_name='sent_to_company_at') THEN
           ALTER TABLE document_processeds ADD COLUMN sent_to_company_at TIMESTAMP;
           RAISE NOTICE 'Added sent_to_company_at column';
@@ -369,6 +457,33 @@ async function runMigration() {
     console.log();
 
     // ============================================
+    // 11. Create company_received_documents table
+    // ============================================
+    console.log('📋 Step 11: Creating company_received_documents table...');
+    await sequelize.query(`
+      CREATE TABLE IF NOT EXISTS company_received_documents (
+        id SERIAL PRIMARY KEY,
+        company_id INTEGER NOT NULL,
+        document_processed_id INTEGER NOT NULL,
+        client_email VARCHAR(255) NOT NULL,
+        sent_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+        FOREIGN KEY (document_processed_id) REFERENCES document_processeds(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_company_received_documents_company
+        ON company_received_documents(company_id);
+      CREATE INDEX IF NOT EXISTS idx_company_received_documents_document
+        ON company_received_documents(document_processed_id);
+
+      COMMENT ON TABLE company_received_documents IS 'Junction table tracking which documents were sent to which companies';
+      COMMENT ON COLUMN company_received_documents.client_email IS 'Email of the client who sent this document';
+    `);
+    console.log('✅ company_received_documents table created/verified');
+    console.log();
+
+    // ============================================
     // Final verification
     // ============================================
     console.log('🔍 Verifying all tables exist...');
@@ -390,7 +505,8 @@ async function runMigration() {
       'document_history',
       'notifications',
       'admin_notifications',
-      'company_notifications'
+      'company_notifications',
+      'company_received_documents'
     ];
 
     console.log(`✅ Found ${tableNames.length} tables in database`);
@@ -402,7 +518,7 @@ async function runMigration() {
       console.log(`⚠️  Missing tables: ${missingTables.join(', ')}`);
       throw new Error(`Missing required tables: ${missingTables.join(', ')}`);
     } else {
-      console.log('✅ All 10 required tables exist');
+      console.log('✅ All 11 required tables exist');
     }
 
     console.log();
